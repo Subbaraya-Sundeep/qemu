@@ -9,6 +9,8 @@ common-obj-$(CONFIG_USB_EHCI) += hcd-ehci.o hcd-ehci-pci.o
 common-obj-$(CONFIG_USB_EHCI_SYSBUS) += hcd-ehci-sysbus.o
 common-obj-$(CONFIG_USB_XHCI) += hcd-xhci.o
 common-obj-$(CONFIG_USB_MUSB) += hcd-musb.o
+common-obj-$(CONFIG_UDC) += udc-core.o
+common-obj-$(CONFIG_XILINX_UDC) += xudc.o
 
 obj-$(CONFIG_TUSB6010) += tusb6010.o
 
