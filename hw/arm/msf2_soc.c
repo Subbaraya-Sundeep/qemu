@@ -28,6 +28,15 @@
 #include "hw/arm/arm.h"
 #include "exec/address-spaces.h"
 #include "hw/arm/msf2_soc.h"
+#include "hw/char/serial.h"
+
+#define MSF2_NUM_USARTS      1
+#define MSF2_NUM_TIMERS      1
+
+#define DDR_BASE_ADDRESS     0xA000000
+#define DDR_SIZE             (1024 * 1024 * 1024)
+#define SRAM_BASE_ADDRESS    0x2000000
+#define SRAM_SIZE           (64 * 1024)
 
 static const uint32_t timer_addr[MSF2_NUM_TIMERS] = { 0x40004000 };
 static const uint32_t usart_addr[MSF2_NUM_USARTS] = { 0x40000000 };
@@ -35,35 +44,16 @@ static const uint32_t usart_addr[MSF2_NUM_USARTS] = { 0x40000000 };
 static const int timer_irq[MSF2_NUM_TIMERS] = {14};
 static const int usart_irq[MSF2_NUM_USARTS] = {10};
 
-static void msf2_soc_initfn(Object *obj)
+static void msf2_init(MachineState *machine)
 {
-    MSF2State *s = MSF2_SOC(obj);
-    int i;
-
-    for (i = 0; i < MSF2_NUM_USARTS; i++) {
-        object_initialize(&s->usart[i], sizeof(s->usart[i]),
-                          TYPE_MSF2_USART);
-        qdev_set_parent_bus(DEVICE(&s->usart[i]), sysbus_get_default());
-    }
-
-    for (i = 0; i < MSF2_NUM_TIMERS; i++) {
-        object_initialize(&s->timer[i], sizeof(s->timer[i]),
-                          TYPE_MSF2_TIMER);
-        qdev_set_parent_bus(DEVICE(&s->timer[i]), sysbus_get_default());
-    }
-}
-
-static void msf2_soc_realize(DeviceState *dev_soc, Error **errp)
-{
-    MSF2State *s = MSF2_SOC(dev_soc);
-    DeviceState *usartdev, *timerdev, *nvic;
-    SysBusDevice *usartbusdev, *timerbusdev;
-    Error *err = NULL;
-    int i;
-
+    char *kernel_filename = NULL;
+    DeviceState *dev;
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *sram = g_new(MemoryRegion, 1);
     MemoryRegion *ddr = g_new(MemoryRegion, 1);
+    QemuOpts *machine_opts = qemu_get_machine_opts();
+
+    kernel_filename = qemu_opt_get(machine_opts, "kernel");
 
     memory_region_init_ram(ddr, NULL, "MSF2.ddr", DDR_SIZE,
                            &error_fatal);
@@ -75,56 +65,29 @@ static void msf2_soc_realize(DeviceState *dev_soc, Error **errp)
     vmstate_register_ram_global(sram);
     memory_region_add_subregion(system_memory, SRAM_BASE_ADDRESS, sram);
 
-    nvic = armv7m_init(get_system_memory(), DDR_SIZE, 96,
-                       s->kernel_filename, s->cpu_model);
+    nvic = armv7m_init(system_memory, DDR_SIZE, 83,
+                       kernel_filename, "cortex-m3");
 
     for (i = 0; i < MSF2_NUM_USARTS; i++) {
         serial_mm_init(get_system_memory(), usart_addr[i], 2,
-                           qdev_get_gpio_in(nvic, usart_irq[i]),
-                           115200, serial_hds[i],
-                           DEVICE_NATIVE_ENDIAN);
+                       qdev_get_gpio_in(nvic, usart_irq[i]),
+                       115200, serial_hds[i], DEVICE_NATIVE_ENDIAN);
     }
 
     for (i = 0; i < MSF2_NUM_TIMERS; i++) {
-        timerdev = DEVICE(&(s->timer[i]));
+        dev = qdev_create(NULL, "xlnx.xps-timer");
         qdev_prop_set_uint64(timerdev, "clock-frequency", 83000000);
-        object_property_set_bool(OBJECT(&s->timer[i]), true, "realized", &err);
-        if (err != NULL) {
-            error_propagate(errp, err);
-            return;
-        }
-        timerbusdev = SYS_BUS_DEVICE(timerdev);
-        sysbus_mmio_map(timerbusdev, 0, timer_addr[i]);
-        sysbus_connect_irq(timerbusdev, 0,
+        qdev_init_nofail(dev);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, timer_addr[i]);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
                            qdev_get_gpio_in(nvic, timer_irq[i]));
     }
 }
 
-static Property msf2_soc_properties[] = {
-    DEFINE_PROP_STRING("kernel-filename", MSF2State, kernel_filename),
-    DEFINE_PROP_STRING("cpu-model", MSF2State, cpu_model),
-    DEFINE_PROP_END_OF_LIST(),
-};
-
-static void msf2_soc_class_init(ObjectClass *klass, void *data)
+static void msf2_machine_init(MachineClass *mc)
 {
-    DeviceClass *dc = DEVICE_CLASS(klass);
-
-    dc->realize = msf2_soc_realize;
-    dc->props = msf2_soc_properties;
+    mc->desc = "Microsemi Smart Fusion2 Development board";
+    mc->init = msf2_init;
 }
 
-static const TypeInfo msf2_soc_info = {
-    .name          = TYPE_MSF2_SOC,
-    .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(MSF2State),
-    .instance_init = msf2_soc_initfn,
-    .class_init    = msf2_soc_class_init,
-};
-
-static void msf2_soc_types(void)
-{
-    type_register_static(&msf2_soc_info);
-}
-
-type_init(msf2_soc_types)
+DEFINE_MACHINE("microsemi-smartfusion2", msf2_machine_init)
