@@ -27,8 +27,9 @@
 #include "qemu-common.h"
 #include "hw/arm/arm.h"
 #include "exec/address-spaces.h"
-#include "hw/arm/msf2_soc.h"
+#include "hw/sysbus.h"
 #include "hw/char/serial.h"
+#include "hw/boards.h"
 
 #define MSF2_NUM_USARTS      1
 #define MSF2_NUM_TIMERS      1
@@ -46,8 +47,9 @@ static const int usart_irq[MSF2_NUM_USARTS] = {10};
 
 static void msf2_init(MachineState *machine)
 {
-    char *kernel_filename = NULL;
-    DeviceState *dev;
+    const char *kernel_filename = NULL;
+    DeviceState *dev, *nvic;
+    int i;
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *sram = g_new(MemoryRegion, 1);
     MemoryRegion *ddr = g_new(MemoryRegion, 1);
@@ -65,7 +67,7 @@ static void msf2_init(MachineState *machine)
     vmstate_register_ram_global(sram);
     memory_region_add_subregion(system_memory, SRAM_BASE_ADDRESS, sram);
 
-    nvic = armv7m_init(system_memory, DDR_SIZE, 83,
+    nvic = armv7m_init(system_memory, DDR_SIZE, 96,
                        kernel_filename, "cortex-m3");
 
     for (i = 0; i < MSF2_NUM_USARTS; i++) {
@@ -73,15 +75,16 @@ static void msf2_init(MachineState *machine)
                        qdev_get_gpio_in(nvic, usart_irq[i]),
                        115200, serial_hds[i], DEVICE_NATIVE_ENDIAN);
     }
-
+/*
     for (i = 0; i < MSF2_NUM_TIMERS; i++) {
-        dev = qdev_create(NULL, "xlnx.xps-timer");
-        qdev_prop_set_uint64(timerdev, "clock-frequency", 83000000);
+        dev = qdev_create(NULL, "msf2-timer");
+        qdev_prop_set_uint64(dev, "clock-frequency", 83000000);
         qdev_init_nofail(dev);
         sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, timer_addr[i]);
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
                            qdev_get_gpio_in(nvic, timer_irq[i]));
     }
+*/
 }
 
 static void msf2_machine_init(MachineClass *mc)
@@ -90,4 +93,4 @@ static void msf2_machine_init(MachineClass *mc)
     mc->init = msf2_init;
 }
 
-DEFINE_MACHINE("microsemi-smartfusion2", msf2_machine_init)
+DEFINE_MACHINE("smartfusion2", msf2_machine_init)
