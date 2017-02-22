@@ -191,6 +191,7 @@ static void arm_cpu_reset(CPUState *s)
             /* Address zero is covered by ROM which hasn't yet been
              * copied into physical memory.
              */
+	printf("ROM\n");
             initial_msp = ldl_p(rom);
             initial_pc = ldl_p(rom + 4);
         } else {
@@ -199,10 +200,13 @@ static void arm_cpu_reset(CPUState *s)
              * it got copied into memory. In the latter case, rom_ptr
              * will return a NULL pointer and we should use ldl_phys instead.
              */
+	printf("DDR\n");
             initial_msp = ldl_phys(s->as, 0);
             initial_pc = ldl_phys(s->as, 4);
         }
 
+	printf("SP:%x\n", initial_msp);
+	printf("PC:%x\n", initial_pc);
         env->regs[13] = initial_msp & 0xFFFFFFFC;
         env->regs[15] = initial_pc & ~1;
         env->thumb = initial_pc & 1;

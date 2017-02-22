@@ -213,9 +213,11 @@ DeviceState *armv7m_init(MemoryRegion *system_memory, int mem_size, int num_irq,
     }
 
     if (kernel_filename) {
+			printf("load_elf\n");
         image_size = load_elf(kernel_filename, NULL, NULL, &entry, &lowaddr,
                               NULL, big_endian, EM_ARM, 1, 0);
         if (image_size < 0) {
+			printf("load_image_targphys\n");
             image_size = load_image_targphys(kernel_filename, 0, mem_size);
             lowaddr = 0;
         }
