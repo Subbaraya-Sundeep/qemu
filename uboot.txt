@@ -1,0 +1,15 @@
+mssddr_facc1_cr:0xa482124
+mssddr_pll_status_low_cr:0x2420041▒
+
+U-Boot 2010.03-00042-g91df632-dirty (Feb 22 2017 - 15:44:22)
+
+CPU  : SmartFusion2 SoC (Cortex-M3 Hard IP)
+Freqs: CORTEX-M3=166MHz,PCLK0=83MHz,PCLK1=83MHz
+Board: Falcon Rev 1A, www.microsemi.com
+SW   : Rev 1.2.8
+DRAM:  128 MB
+In:    serial
+Out:   serial
+Err:   serial
+Net:   RWI_MAC
+
