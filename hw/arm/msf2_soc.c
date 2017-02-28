@@ -22,39 +22,6 @@
  * THE SOFTWARE.
  */
 
-/*
-
-MSSDDR_PLL_STATUS_LOW_CR 0x90 RW-P Register CC_RESET_N Controls the configuration input
-of MPLL register
-
-MSSDDR_PLL_STATUS_HIGH_CR 0x94 RW-P Register CC_RESET_N Controls the configuration input
-of MPLL register
-
-MSSDDR_FACC1_CR 0x98 RW-P Field CC_RESET_N MSS DDR bridge FACC1
-Configuration Register
-
-MSSDDR_FACC2_CR 0x9C RW-P Field CC_RESET_N MSS DDR bridge FACC2
-Configuration Register
-     * Analog voltage = 3.3v. Libero appears to ignore this
-     * setting and defines this as 2.5v regardless.
-     * We change it dynamically.
-    M2S_SYSREG->mssddr_pll_status_high_cr &= ~(1<<2);
-
-     * Wait for fabric PLL to lock. MPPL is getting clock from FPGA PLL.
-    while (!(M2S_SYSREG->mssddr_pll_status & (1<<0)));
-
-     * Negate MPLL bypass.
-    M2S_SYSREG->mssddr_pll_status_high_cr &= ~(1<<0);
-
-     * Wait for MPLL to lock.
-    while (!(M2S_SYSREG->mssddr_pll_status & (1<<1)));
-
-     * Drive M3, PCLK0, PCLK1 from stage 2 dividers.
-     * This is what enables the MPLL.
-    M2S_SYSREG->mssddr_facc1_cr &= ~(1<<12);
-
-*/
-
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "qemu-common.h"
@@ -77,6 +44,8 @@ Configuration Register
 #define SRAM_SIZE           (64 * 1024)
 
 #define MSF2_TIMER_BASE      0x40004000
+#define MSF2_SYSREG_BASE     0x40038000
+#define MSF2_DDRC_BASE       0x40020000
 
 static const uint32_t usart_addr[MSF2_NUM_USARTS] = { 0x40000000 };
 
@@ -122,6 +91,7 @@ static void msf2_init(MachineState *machine)
                        115200, serial_hds[i], DEVICE_NATIVE_ENDIAN);
     }
  
+
     dev = qdev_create(NULL, "msf2-timer");
     qdev_prop_set_uint32(dev, "clock-frequency", 83 * 1000000);
     qdev_init_nofail(dev);
@@ -130,6 +100,14 @@ static void msf2_init(MachineState *machine)
                            qdev_get_gpio_in(nvic, timer_irq[0]));
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 1,
                            qdev_get_gpio_in(nvic, timer_irq[1]));
+
+    dev = qdev_create(NULL, "msf2-sysreg");
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, MSF2_SYSREG_BASE);
+
+    dev = qdev_create(NULL, "msf2-ddrc");
+    qdev_init_nofail(dev);
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, MSF2_DDRC_BASE);
 }
 
 static void msf2_machine_init(MachineClass *mc)
