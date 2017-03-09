@@ -1,7 +1,7 @@
 /*
- * QEMU model of the Xilinx timer block.
+ * QEMU model of the SmartFusion2 timer.
  *
- * Copyright (c) 2009 Edgar E. Iglesias.
+ * Copyright (c) 2017 Subbaraya Sundeep <sundeep.babi@gmail.com>.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

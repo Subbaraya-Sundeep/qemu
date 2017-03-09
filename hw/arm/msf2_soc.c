@@ -34,10 +34,10 @@
 #define MSF2_NUM_USARTS      1
 #define MSF2_NUM_TIMERS      2
 
-#define ENVM_BASE_ADDRESS     0x00000000
+#define ENVM_BASE_ADDRESS     0x60000000
 #define ENVM_SIZE             (128 * 1024)
 
-#define DDR_BASE_ADDRESS     0xA2000000
+#define DDR_BASE_ADDRESS      0xA0000000
 #define DDR_SIZE             (1024 * 1024 * 1024)
 
 #define SRAM_BASE_ADDRESS    0x20000000
@@ -59,6 +59,7 @@ static void msf2_init(MachineState *machine)
     int i;
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *nvm = g_new(MemoryRegion, 1);
+    MemoryRegion *nvm_alias = g_new(MemoryRegion, 1);
     MemoryRegion *sram = g_new(MemoryRegion, 1);
     MemoryRegion *ddr = g_new(MemoryRegion, 1);
     QemuOpts *machine_opts = qemu_get_machine_opts();
@@ -67,9 +68,15 @@ static void msf2_init(MachineState *machine)
 
     memory_region_init_ram(nvm, NULL, "MSF2.envm", ENVM_SIZE,
                            &error_fatal);
+    memory_region_init_alias(nvm_alias, NULL, "STM32F205.flash.alias",
+                             nvm, 0, ENVM_SIZE);
     vmstate_register_ram_global(nvm);
+
     memory_region_set_readonly(nvm, true);
+    memory_region_set_readonly(nvm_alias, true);
+
     memory_region_add_subregion(system_memory, ENVM_BASE_ADDRESS, nvm);
+    memory_region_add_subregion(system_memory, 0, nvm_alias);
 
     memory_region_init_ram(ddr, NULL, "MSF2.ddr", DDR_SIZE,
                            &error_fatal);
