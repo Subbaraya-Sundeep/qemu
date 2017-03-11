@@ -28,12 +28,13 @@
 #include "qemu/log.h"
 #include "qemu/main-loop.h"
 
-#define D(x)	x
+#define D(x)
 
 #define NUM_TIMERS     2
 
 #define R_VAL          0
 #define R_LOADVAL      1
+#define R_BGLOADVAL    2
 #define R_CTRL         3  
 #define R_RIS          4  
 #define R_MIS          5  
@@ -105,38 +106,35 @@ timer_read(void *opaque, hwaddr addr, unsigned int size)
     switch (addr)
     {
         case R_VAL:
-                r = ptimer_get_count(st->ptimer);
-                D(qemu_log("msf2_timer t=%d read counter=%x\n",
-                         timer, r));
-            break;
+             r = ptimer_get_count(st->ptimer);
+             D(qemu_log("msf2_timer t=%d read counter=%x\n", timer, r));
+             break;
 
         case R_MIS:
-                isr = !!(st->regs[R_RIS] & TIMER_RIS_ACK);
-                ier = !!(st->regs[R_CTRL] & TIMER_CTRL_INTR);
-		r =  ier && isr;
+             isr = !!(st->regs[R_RIS] & TIMER_RIS_ACK);
+             ier = !!(st->regs[R_CTRL] & TIMER_CTRL_INTR);
+             r = ier && isr;
+             break;
 
         default:
             if (addr < ARRAY_SIZE(st->regs))
                 r = st->regs[addr];
             break;
-
     }
     D(fprintf(stderr, "%s timer=%d %x=%x\n", __func__, timer, addr * 4, r));
     return r;
 }
 
-static void timer_disable(struct msf2_timer *st)
-{
-    ptimer_stop(st->ptimer);
-}
-
-static void timer_enable(struct msf2_timer *st)
+static void timer_update(struct msf2_timer *st)
 {
     uint64_t count;
 
     D(fprintf(stderr, "%s timer=%d\n", __func__, st->nr));
 
-    ptimer_stop(st->ptimer);
+    if (!(st->regs[R_CTRL] & TIMER_CTRL_ENBL)) {
+        ptimer_stop(st->ptimer);
+		return;
+	}
 
     count = st->regs[R_LOADVAL];
     ptimer_set_limit(st->ptimer, count, 1);
@@ -162,15 +160,28 @@ timer_write(void *opaque, hwaddr addr,
     {
         case R_CTRL:
             st->regs[R_CTRL] = value;
-            if (value & TIMER_CTRL_ENBL)
-                timer_enable(st);
-            else
-                timer_disable(st);
+            timer_update(st);
             break;
  
         case R_RIS:
             if (value & TIMER_RIS_ACK)
-		 st->regs[R_RIS] &= ~TIMER_RIS_ACK;
+                st->regs[R_RIS] &= ~TIMER_RIS_ACK;
+            break;
+
+        case R_LOADVAL:
+            st->regs[R_LOADVAL] = value;
+            if (st->regs[R_CTRL] & TIMER_CTRL_ENBL)
+                timer_update(st);
+            break;
+
+        case R_BGLOADVAL:
+            st->regs[R_BGLOADVAL] = value;
+            st->regs[R_LOADVAL] = value;
+			break;
+
+        case R_VAL:
+        case R_MIS:
+            break;
 
         default:
             if (addr < ARRAY_SIZE(st->regs))
@@ -197,7 +208,7 @@ static void timer_hit(void *opaque)
     st->regs[R_RIS] |= TIMER_RIS_ACK;
 
     if (!(st->regs[R_CTRL] & TIMER_CTRL_ONESHOT))
-        timer_enable(st);
+        timer_update(st);
     timer_update_irq(st);
 }
 

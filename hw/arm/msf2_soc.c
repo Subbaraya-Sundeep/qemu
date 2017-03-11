@@ -88,7 +88,7 @@ static void msf2_init(MachineState *machine)
     vmstate_register_ram_global(sram);
     memory_region_add_subregion(system_memory, SRAM_BASE_ADDRESS, sram);
 
-    nvic = armv7m_init(system_memory, DDR_SIZE, 96,
+    nvic = armv7m_init(system_memory, ENVM_SIZE, 96,
                        kernel_filename, "cortex-m3");
 
     for (i = 0; i < MSF2_NUM_USARTS; i++) {
