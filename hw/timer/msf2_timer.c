@@ -103,6 +103,9 @@ timer_read(void *opaque, hwaddr addr, unsigned int size)
     timer = timer_from_addr(addr);
     st = &t->timers[timer];
 
+    if (timer)
+        addr -= 6;
+
     switch (addr)
     {
         case R_VAL:
@@ -153,8 +156,11 @@ timer_write(void *opaque, hwaddr addr,
     addr >>= 2;
     timer = timer_from_addr(addr);
     st = &t->timers[timer];
-    D(fprintf(stderr, "%s addr=%x val=%x (timer=%d off=%d)\n",
-             __func__, addr * 4, value, timer, addr & 3));
+    D(fprintf(stderr, "%s addr=%x val=%x (timer=%d)\n",
+             __func__, addr * 4, value, timer));
+
+    if (timer)
+        addr -= 6;
 
     switch (addr) 
     {
