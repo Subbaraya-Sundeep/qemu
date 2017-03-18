@@ -1,5 +1,5 @@
 /*
- * MSF2 SoC
+ * Microsemi Smartfusion2 dev-kit emulation
  *
  * Copyright (c) 2017 Subbaraya Sundeep <sundeep.lkml@gmail.com>
  *
