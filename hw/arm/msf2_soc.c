@@ -30,6 +30,8 @@
 #include "hw/sysbus.h"
 #include "hw/char/serial.h"
 #include "hw/boards.h"
+#include "sysemu/block-backend.h"
+#include "hw/ssi/ssi.h"
 
 #define MSF2_NUM_USARTS      1
 #define MSF2_NUM_TIMERS      2
@@ -46,6 +48,7 @@
 #define MSF2_TIMER_BASE      0x40004000
 #define MSF2_SYSREG_BASE     0x40038000
 #define MSF2_DDRC_BASE       0x40020000
+#define MSF2_SPI0_BASE       0x40001000
 
 static const uint32_t usart_addr[MSF2_NUM_USARTS] = { 0x40000000 };
 
@@ -63,6 +66,10 @@ static void msf2_init(MachineState *machine)
     MemoryRegion *sram = g_new(MemoryRegion, 1);
     MemoryRegion *ddr = g_new(MemoryRegion, 1);
     QemuOpts *machine_opts = qemu_get_machine_opts();
+    SysBusDevice *busdev;
+    DriveInfo *dinfo = drive_get_next(IF_MTD);
+    qemu_irq cs_line;
+    SSIBus *spi;
 
     kernel_filename = qemu_opt_get(machine_opts, "kernel");
 
@@ -97,7 +104,6 @@ static void msf2_init(MachineState *machine)
                        qdev_get_gpio_in(nvic, usart_irq[i]),
                        115200, serial_hds[i], DEVICE_NATIVE_ENDIAN);
     }
- 
 
     dev = qdev_create(NULL, "msf2-timer");
     qdev_prop_set_uint32(dev, "clock-frequency", 83 * 1000000);
@@ -115,6 +121,22 @@ static void msf2_init(MachineState *machine)
     dev = qdev_create(NULL, "msf2-ddrc");
     qdev_init_nofail(dev);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, MSF2_DDRC_BASE);
+
+    dev = qdev_create(NULL, "msf2-spi");
+    qdev_prop_set_uint32(dev, "num-ss-bits", 1);
+    qdev_init_nofail(dev);
+    busdev = SYS_BUS_DEVICE(dev);
+    sysbus_mmio_map(busdev, 0, MSF2_SPI0_BASE);
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(nvic, 2));
+
+    spi = (SSIBus *)qdev_get_child_bus(dev, "spi");
+    dev = ssi_create_slave_no_init(spi, "s25sl064p");
+    if (dinfo)
+		qdev_prop_set_drive(dev, "drive", blk_by_legacy_dinfo(dinfo),
+                                    &error_fatal);
+    qdev_init_nofail(dev);
+    cs_line = qdev_get_gpio_in_named(dev, SSI_GPIO_CS, 0);
+    sysbus_connect_irq(busdev, 1, cs_line);
 }
 
 static void msf2_machine_init(MachineClass *mc)

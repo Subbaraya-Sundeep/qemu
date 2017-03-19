@@ -157,6 +157,10 @@ spi_read(void *opaque, hwaddr addr, unsigned int size)
 
     addr >>= 2;
     switch (addr) {
+	case R_RX:
+		s->regs[R_STATUS] |= S_RXFIFOEMP;
+        r = s->regs[addr];
+		break;
 
     default:
         if (addr < ARRAY_SIZE(s->regs)) {
@@ -182,11 +186,13 @@ spi_write(void *opaque, hwaddr addr,
     switch (addr) {
 	case R_TX:
     	s->regs[R_RX] = ssi_transfer(s->spi, value);
+	//	printf("TX:%x and Rx:%x\n", value, s->regs[R_RX]);
 		s->regs[R_STATUS] &= ~S_RXFIFOEMP;
 		break;
 
 	case R_SS:
         s->regs[R_SS] = value;
+		printf("cs:%d\n", !(s->regs[R_SS] & 1 << 0));
     	for (i = 0; i < s->num_cs; ++i)
         	qemu_set_irq(s->cs_lines[i], !(s->regs[R_SS] & 1 << i));
 		break;
