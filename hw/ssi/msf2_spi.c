@@ -39,8 +39,8 @@
     #define DB_PRINT(...)
 #endif
 
-#define FIFO_CAPACITY  32 
-#define FIFO_CAPACITY  32 
+#define FIFO_CAPACITY     32 
+#define FIFO_CAPACITY     32 
 
 #define R_CONTROL         0
 #define R_DFSIZE          1
@@ -86,6 +86,8 @@
 #define C_OENOFF          (1 << 1)
 #define C_RESET           (1 << 1)
 
+#define FRAMESZ_MASK	  0x1F		
+
 #define TXDONE            (1 << 0)
 #define RXRDY             (1 << 1)
 #define RXCHOVRF          (1 << 2)
@@ -102,15 +104,16 @@ typedef struct Msf2SPI {
     MemoryRegion mmio;
 
     qemu_irq irq;
-    int irqline;
 
-    uint8_t num_cs;
-    qemu_irq *cs_lines;
+    qemu_irq cs_line;
 
     SSIBus *spi;
 
     Fifo32 rx_fifo;
     Fifo32 tx_fifo;
+
+    int fifo_depth;
+	bool enabled;
 
     uint32_t regs[R_MAX];
 } Msf2SPI;
@@ -131,14 +134,29 @@ static void rxfifo_reset(Msf2SPI *s)
     s->regs[R_STATUS] |= S_RXFIFOEMP;
 }
 
+static void set_fifodepth(Msf2SPI *s)
+{
+	int size = s->regs[R_DFSIZE] & FRAMESZ_MASK;
+
+	if (0 <= size && size <= 8)
+		s->fifo_depth = 32;
+	if (9 <= size && size <= 16)
+		s->fifo_depth = 16;
+	if (17 <= size && size <= 32)
+		s->fifo_depth = 8;
+}
+
 static void msf2_spi_do_reset(Msf2SPI *s)
 {
     memset(s->regs, 0, sizeof s->regs);
-	s->regs[R_CONTROL] = 0x80000102;
-	s->regs[R_DFSIZE]  = 0x4;
-	s->regs[R_STATUS]  = 0x2440;
-	s->regs[R_CLKGEN] = 0x7;
-	s->regs[R_STAT8]   = 0x7;
+    s->regs[R_CONTROL] = 0x80000102;
+    s->regs[R_DFSIZE] = 0x4;
+    s->regs[R_STATUS] = 0x2440;
+    s->regs[R_CLKGEN] = 0x7;
+    s->regs[R_STAT8] = 0x7;
+
+	s->fifo_depth = 4;
+	s->enabled = false;
 
     rxfifo_reset(s);
     txfifo_reset(s);
@@ -157,10 +175,13 @@ spi_read(void *opaque, hwaddr addr, unsigned int size)
 
     addr >>= 2;
     switch (addr) {
-	case R_RX:
-		s->regs[R_STATUS] |= S_RXFIFOEMP;
-        r = s->regs[addr];
-		break;
+    case R_RX:
+        s->regs[R_STATUS] &= ~S_RXFIFOFUL;
+        r = fifo32_pop(&s->rx_fifo);
+        if (fifo32_is_empty(&s->rx_fifo)) {
+        	s->regs[R_STATUS] |= S_RXFIFOEMP;
+        }
+        break;
 
     default:
         if (addr < ARRAY_SIZE(s->regs)) {
@@ -169,32 +190,83 @@ spi_read(void *opaque, hwaddr addr, unsigned int size)
         break;
     }
 
-    DB_PRINT("addr=" TARGET_FMT_plx " = %x\n", addr * 4, r);
+	DB_PRINT("addr=" TARGET_FMT_plx " = %x\n", addr * 4, r);
     return r;
 }
 
-static void
-spi_write(void *opaque, hwaddr addr,
+static void spi_flush_txfifo(Msf2SPI *s)
+{
+    uint32_t tx;
+    uint32_t rx;
+
+    while (!fifo32_is_empty(&s->tx_fifo)) {
+        tx = fifo32_pop(&s->tx_fifo);
+        DB_PRINT("data tx:%x\n", tx);
+        rx = ssi_transfer(s->spi, tx);
+        DB_PRINT("data rx:%x\n", rx);
+
+        if (fifo32_num_used(&s->rx_fifo) == s->fifo_depth) {
+            s->regs[R_STATUS] |= S_RXOVERFLOW;
+        } else {
+            fifo32_push(&s->rx_fifo, rx);
+        	s->regs[R_STATUS] &= ~S_RXFIFOEMP;
+        	if (fifo32_num_used(&s->rx_fifo) == (s->fifo_depth - 1)) {
+                s->regs[R_STATUS] |= S_RXFIFOFULNXT;
+            }
+        	if (fifo32_num_used(&s->rx_fifo) == s->fifo_depth) {
+                s->regs[R_STATUS] |= S_RXFIFOFUL;
+            }
+        }
+    }
+}
+
+static void spi_write(void *opaque, hwaddr addr,
             uint64_t val64, unsigned int size)
 {
     Msf2SPI *s = opaque;
     uint32_t value = val64;
-	int i;
 
     DB_PRINT("addr=" TARGET_FMT_plx " = %x\n", addr, value);
     addr >>= 2;
+
     switch (addr) {
-	case R_TX:
-    	s->regs[R_RX] = ssi_transfer(s->spi, value);
-	//	printf("TX:%x and Rx:%x\n", value, s->regs[R_RX]);
-		s->regs[R_STATUS] &= ~S_RXFIFOEMP;
+    case R_TX:
+        s->regs[R_STATUS] &= ~S_TXFIFOEMP;
+        fifo32_push(&s->tx_fifo, value);
+        if (fifo32_num_used(&s->tx_fifo) == (s->fifo_depth - 1)) {
+            s->regs[R_STATUS] |= S_TXFIFOFULNXT;
+        }
+        if (fifo32_num_used(&s->tx_fifo) == s->fifo_depth) {
+            s->regs[R_STATUS] |= S_TXFIFOFUL;
+        }
+		if (s->enabled)
+        	spi_flush_txfifo(s);
+        break;
+ 
+    case R_SS:
+        s->regs[R_SS] = value;
+//		printf("cs:%d\n", !(s->regs[R_SS] & 1 << 0));
+        qemu_set_irq(s->cs_line, !(s->regs[R_SS] & 1));
+        break;
+
+    case R_CONTROL:
+		s->regs[R_CONTROL] = value;
+		if (value & C_BIGFIFO) {
+			set_fifodepth(s);
+        } else {
+			s->fifo_depth = 4;
+		}
+		if (value & C_ENABLE) {
+			s->enabled = true;
+		} else {
+			s->enabled = false;
+		}
 		break;
 
-	case R_SS:
-        s->regs[R_SS] = value;
-		printf("cs:%d\n", !(s->regs[R_SS] & 1 << 0));
-    	for (i = 0; i < s->num_cs; ++i)
-        	qemu_set_irq(s->cs_lines[i], !(s->regs[R_SS] & 1 << i));
+    case R_DFSIZE:
+		if (s->enabled)
+			break;
+		s->regs[R_DFSIZE] = value;
 		break;
 
     default:
@@ -219,24 +291,21 @@ static int msf2_spi_init(SysBusDevice *sbd)
 {
     DeviceState *dev = DEVICE(sbd);
     Msf2SPI *s = MSF2_SPI(dev);
-    int i;
 
     DB_PRINT("\n");
 
     s->spi = ssi_create_bus(dev, "spi");
 
     sysbus_init_irq(sbd, &s->irq);
-    s->cs_lines = g_new0(qemu_irq, s->num_cs);
-    ssi_auto_connect_slaves(dev, s->cs_lines, s->spi);
-    for (i = 0; i < s->num_cs; ++i) {
-        sysbus_init_irq(sbd, &s->cs_lines[i]);
-    }
+    ssi_auto_connect_slaves(dev, &s->cs_line, s->spi);
+    sysbus_init_irq(sbd, &s->cs_line);
 
     memory_region_init_io(&s->mmio, OBJECT(s), &spi_ops, s,
                           "msf2-spi", R_MAX * 4);
     sysbus_init_mmio(sbd, &s->mmio);
 
-    s->irqline = -1;
+    fifo32_create(&s->tx_fifo, FIFO_CAPACITY);
+    fifo32_create(&s->rx_fifo, FIFO_CAPACITY);
 
     return 0;
 }
@@ -253,11 +322,6 @@ static const VMStateDescription vmstate_msf2_spi = {
     }
 };
 
-static Property msf2_spi_properties[] = {
-    DEFINE_PROP_UINT8("num-ss-bits", Msf2SPI, num_cs, 1),
-    DEFINE_PROP_END_OF_LIST(),
-};
-
 static void msf2_spi_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -265,7 +329,6 @@ static void msf2_spi_class_init(ObjectClass *klass, void *data)
 
     k->init = msf2_spi_init;
     dc->reset = msf2_spi_reset;
-    dc->props = msf2_spi_properties;
     dc->vmsd = &vmstate_msf2_spi;
 }
 

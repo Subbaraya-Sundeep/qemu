@@ -123,14 +123,14 @@ static void msf2_init(MachineState *machine)
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, MSF2_DDRC_BASE);
 
     dev = qdev_create(NULL, "msf2-spi");
-    qdev_prop_set_uint32(dev, "num-ss-bits", 1);
     qdev_init_nofail(dev);
     busdev = SYS_BUS_DEVICE(dev);
     sysbus_mmio_map(busdev, 0, MSF2_SPI0_BASE);
     sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(nvic, 2));
 
     spi = (SSIBus *)qdev_get_child_bus(dev, "spi");
-    dev = ssi_create_slave_no_init(spi, "s25sl064p");
+    dev = ssi_create_slave_no_init(spi, "s25sl12801");
+    qdev_prop_set_uint8(dev, "spansion-cr2nv", 0);
     if (dinfo)
 		qdev_prop_set_drive(dev, "drive", blk_by_legacy_dinfo(dinfo),
                                     &error_fatal);
