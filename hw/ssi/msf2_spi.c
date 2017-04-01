@@ -82,11 +82,14 @@
 #define C_INTTXDATA       (1 << 1)
 #define C_INTRXOVRFLO     (1 << 1)
 #define C_INTTXTURUN      (1 << 1)
-#define C_BIGFIFO         (1 << 1)
-#define C_OENOFF          (1 << 1)
+#define C_BIGFIFO         (1 << 29)
+#define C_SPS             (1 << 26)
 #define C_RESET           (1 << 1)
 
-#define FRAMESZ_MASK	  0x1F		
+#define FRAMESZ_MASK	  0x1F
+#define FMCOUNT_MASK      0x00FFFF00
+#define FMCOUNT_SHIFT     8
+
 
 #define TXDONE            (1 << 0)
 #define RXRDY             (1 << 1)
@@ -113,6 +116,7 @@ typedef struct Msf2SPI {
     Fifo32 tx_fifo;
 
     int fifo_depth;
+	uint32_t frame_count;
 	bool enabled;
 
     uint32_t regs[R_MAX];
@@ -155,7 +159,8 @@ static void msf2_spi_do_reset(Msf2SPI *s)
     s->regs[R_CLKGEN] = 0x7;
     s->regs[R_STAT8] = 0x7;
 
-	s->fifo_depth = 4;
+    s->fifo_depth = 4;
+    s->frame_count = 1;
 	s->enabled = false;
 
     rxfifo_reset(s);
@@ -194,12 +199,34 @@ spi_read(void *opaque, hwaddr addr, unsigned int size)
     return r;
 }
 
+static void assert_cs(Msf2SPI *s)
+{
+    qemu_set_irq(s->cs_line, 0);
+}
+
+static void deassert_cs(Msf2SPI *s)
+{
+    qemu_set_irq(s->cs_line, 1);
+}
+
 static void spi_flush_txfifo(Msf2SPI *s)
 {
     uint32_t tx;
     uint32_t rx;
+	bool sps = !!(s->regs[R_CONTROL] & C_SPS);
 
-    while (!fifo32_is_empty(&s->tx_fifo)) {
+    /* 
+     * Chip Select(CS) is automatically controlled by this controller.
+     * If SPS bit is set in Control register then CS is asserted
+     * until all the frames set in frame count of Control register are
+     * transferred. If SPS is not set then CS pulses between frames.
+     * Note that Slave Select register specifies which of the CS line
+     * has to be controlled automatically by controller. Bits SS[7:1] are for
+     * masters in FPGA fabric since we model only Microcontroller subsystem
+     * of Smartfusion2 we control only one CS(SS[0]) line.
+     */
+    while (!fifo32_is_empty(&s->tx_fifo) && s->frame_count) {
+		assert_cs(s);
         tx = fifo32_pop(&s->tx_fifo);
         DB_PRINT("data tx:%x\n", tx);
         rx = ssi_transfer(s->spi, tx);
@@ -217,6 +244,21 @@ static void spi_flush_txfifo(Msf2SPI *s)
                 s->regs[R_STATUS] |= S_RXFIFOFUL;
             }
         }
+        s->frame_count--;
+		if (!sps) {
+            deassert_cs(s);
+            assert_cs(s);
+		}
+    }
+
+    if (!sps) {
+        deassert_cs(s);
+	}
+	if (!s->frame_count) {
+		s->frame_count = (s->regs[R_CONTROL] & FMCOUNT_MASK) >> FMCOUNT_SHIFT;
+	}
+	if (sps && !s->frame_count) {
+        deassert_cs(s);
     }
 }
 
@@ -231,6 +273,10 @@ static void spi_write(void *opaque, hwaddr addr,
 
     switch (addr) {
     case R_TX:
+        /* adding to already full FIFO */
+        if (fifo32_num_used(&s->tx_fifo) == s->fifo_depth) {
+			break;
+		}
         s->regs[R_STATUS] &= ~S_TXFIFOEMP;
         fifo32_push(&s->tx_fifo, value);
         if (fifo32_num_used(&s->tx_fifo) == (s->fifo_depth - 1)) {
@@ -241,12 +287,6 @@ static void spi_write(void *opaque, hwaddr addr,
         }
 		if (s->enabled)
         	spi_flush_txfifo(s);
-        break;
- 
-    case R_SS:
-        s->regs[R_SS] = value;
-//		printf("cs:%d\n", !(s->regs[R_SS] & 1 << 0));
-        qemu_set_irq(s->cs_line, !(s->regs[R_SS] & 1));
         break;
 
     case R_CONTROL:
@@ -261,6 +301,7 @@ static void spi_write(void *opaque, hwaddr addr,
 		} else {
 			s->enabled = false;
 		}
+		s->frame_count = (value & FMCOUNT_MASK) >> FMCOUNT_SHIFT;
 		break;
 
     case R_DFSIZE:
